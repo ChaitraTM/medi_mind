@@ -16,6 +16,7 @@ export default function Review() {
   const [expanded, setExpanded] = useState(null);
   const [busy, setBusy] = useState(null);
   const [filter, setFilter] = useState("ALL");
+  const [notes, setNotes] = useState({});
 
   const load = () => api.reviews().then(setReviews).catch(() => {});
   useEffect(() => { load(); }, []);
@@ -24,8 +25,9 @@ export default function Review() {
     setBusy(id);
     try {
       const fn = { approve: api.approveReview, reject: api.rejectReview, second: api.secondReview }[action];
-      await fn(id);
+      await fn(id, notes[id] || "");
       toast.success(`Review ${action === "second" ? "escalated for second review" : action + "d"}`);
+      setNotes((n) => ({ ...n, [id]: "" }));
       await load();
     } catch (e) {
       toast.error("Action failed. Please retry.");
@@ -104,6 +106,18 @@ export default function Review() {
             </div>
 
             {/* Actions */}
+            {(r.status === "PENDING" || r.status === "SECOND_REVIEW") && (
+              <div className="border-t border-slate-100 px-4 pt-3">
+                <textarea
+                  data-testid={`review-note-${r.id}`}
+                  value={notes[r.id] || ""}
+                  onChange={(e) => setNotes((n) => ({ ...n, [r.id]: e.target.value }))}
+                  rows={2}
+                  placeholder="Optional clinician note (recorded in the audit trail)…"
+                  className="w-full resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-primary"
+                />
+              </div>
+            )}
             <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 bg-slate-50 px-4 py-3">
               {r.status === "PENDING" || r.status === "SECOND_REVIEW" ? (
                 <>
@@ -160,11 +174,16 @@ export default function Review() {
                   </p>
                   <div className="space-y-1.5">
                     {r.audit_trail?.map((a, i) => (
-                      <div key={i} className="flex items-center gap-2 text-xs">
+                      <div key={i} className="flex flex-wrap items-center gap-2 text-xs">
                         <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-slate-600">
                           {a.action}
                         </span>
                         <span className="text-slate-500">{a.note}</span>
+                        {a.clinician_note && (
+                          <span className="rounded-md bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+                            “{a.clinician_note}”
+                          </span>
+                        )}
                         <span className="ml-auto text-[10px] text-slate-400">{new Date(a.at).toLocaleTimeString()}</span>
                       </div>
                     ))}

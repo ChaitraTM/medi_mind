@@ -51,6 +51,10 @@ class SpeakRequest(BaseModel):
     voice: str = "nova"
 
 
+class ReviewActionRequest(BaseModel):
+    note: Optional[str] = None
+
+
 # ------------- Helpers -------------
 async def record_execution(agent_name, input_type, status, confidence, handoff_reason, query, start, end):
     doc = {
@@ -370,15 +374,20 @@ async def list_reviews():
     return revs
 
 
-async def _update_review(review_id: str, new_status: str, action: str, note: str):
+async def _update_review(review_id: str, new_status: str, action: str, note: str, clinician_note: str = None):
     rev = await clinician_reviews.find_one({"id": review_id})
     if not rev:
         raise HTTPException(status_code=404, detail="Review not found.")
     ts = now_iso()
     entry = {"action": action, "at": ts, "note": note}
+    if clinician_note and clinician_note.strip():
+        entry["clinician_note"] = clinician_note.strip()
+    set_fields = {"status": new_status, "updated_at": ts}
+    if clinician_note and clinician_note.strip():
+        set_fields["clinician_note"] = clinician_note.strip()
     await clinician_reviews.update_one(
         {"id": review_id},
-        {"$set": {"status": new_status, "updated_at": ts}, "$push": {"audit_trail": entry}},
+        {"$set": set_fields, "$push": {"audit_trail": entry}},
     )
     await imaging_analyses.update_one(
         {"review_id": review_id},
@@ -390,21 +399,21 @@ async def _update_review(review_id: str, new_status: str, action: str, note: str
 
 
 @api.post("/reviews/{review_id}/approve")
-async def approve_review(review_id: str):
+async def approve_review(review_id: str, req: ReviewActionRequest = ReviewActionRequest()):
     return await _update_review(review_id, "APPROVED", "APPROVED",
-                                "Clinician approved the AI analysis")
+                                "Clinician approved the AI analysis", req.note)
 
 
 @api.post("/reviews/{review_id}/reject")
-async def reject_review(review_id: str):
+async def reject_review(review_id: str, req: ReviewActionRequest = ReviewActionRequest()):
     return await _update_review(review_id, "REJECTED", "REJECTED",
-                                "Clinician rejected the AI analysis")
+                                "Clinician rejected the AI analysis", req.note)
 
 
 @api.post("/reviews/{review_id}/second-review")
-async def second_review(review_id: str):
+async def second_review(review_id: str, req: ReviewActionRequest = ReviewActionRequest()):
     return await _update_review(review_id, "SECOND_REVIEW", "REQUEST_SECOND_REVIEW",
-                                "Clinician requested a second review")
+                                "Clinician requested a second review", req.note)
 
 
 # ------------- Conversations -------------

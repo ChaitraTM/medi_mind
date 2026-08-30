@@ -72,9 +72,9 @@ export const api = {
   },
 
   reviews: () => client.get("/reviews").then((r) => r.data),
-  approveReview: (id) => client.post(`/reviews/${id}/approve`).then((r) => r.data),
-  rejectReview: (id) => client.post(`/reviews/${id}/reject`).then((r) => r.data),
-  secondReview: (id) => client.post(`/reviews/${id}/second-review`).then((r) => r.data),
+  approveReview: (id, note) => client.post(`/reviews/${id}/approve`, { note }).then((r) => r.data),
+  rejectReview: (id, note) => client.post(`/reviews/${id}/reject`, { note }).then((r) => r.data),
+  secondReview: (id, note) => client.post(`/reviews/${id}/second-review`, { note }).then((r) => r.data),
 
   transcribe: (blob) => {
     const fd = new FormData();
