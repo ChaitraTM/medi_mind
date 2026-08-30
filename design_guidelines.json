@@ -1,0 +1,114 @@
+{
+  "theme": "Medical Clinical Dashboard",
+  "archetype": "ARCHETYPE 4: SWISS & HIGH-CONTRAST (Modified for Clinical AI)",
+  "typography": {
+    "headings": {
+      "fontFamily": "Manrope, sans-serif",
+      "weights": ["600", "700", "800"],
+      "tracking": "tracking-tight"
+    },
+    "body": {
+      "fontFamily": "'IBM Plex Sans', sans-serif",
+      "weights": ["400", "500"]
+    },
+    "monospace": {
+      "fontFamily": "'JetBrains Mono', monospace",
+      "usage": "Data metrics, confidence percentages, latency values, agent execution logs."
+    },
+    "hierarchy": {
+      "h1": "text-3xl sm:text-4xl font-bold tracking-tight text-slate-900",
+      "h2": "text-xl sm:text-2xl font-semibold text-slate-800",
+      "h3": "text-lg font-medium text-slate-700",
+      "metric": "text-4xl sm:text-5xl font-mono font-bold tracking-tighter"
+    }
+  },
+  "colors": {
+    "css_variables_light": {
+      "--background": "210 40% 98%",
+      "--foreground": "222.2 84% 4.9%",
+      "--card": "0 0% 100%",
+      "--card-foreground": "222.2 84% 4.9%",
+      "--popover": "0 0% 100%",
+      "--popover-foreground": "222.2 84% 4.9%",
+      "--primary": "221.2 83.2% 53.3%",
+      "--primary-foreground": "210 40% 98%",
+      "--secondary": "210 40% 96.1%",
+      "--secondary-foreground": "222.2 47.4% 11.2%",
+      "--muted": "210 40% 96.1%",
+      "--muted-foreground": "215.4 16.3% 46.9%",
+      "--accent": "210 40% 96.1%",
+      "--accent-foreground": "222.2 47.4% 11.2%",
+      "--destructive": "346.8 77.2% 49.8%",
+      "--destructive-foreground": "210 40% 98%",
+      "--border": "214.3 31.8% 91.4%",
+      "--input": "214.3 31.8% 91.4%",
+      "--ring": "221.2 83.2% 53.3%"
+    },
+    "semantic_classes": {
+      "high_confidence_bg": "bg-emerald-50",
+      "high_confidence_text": "text-emerald-700",
+      "high_confidence_border": "border-emerald-200",
+      "medium_confidence_bg": "bg-amber-50",
+      "medium_confidence_text": "text-amber-700",
+      "low_confidence_bg": "bg-rose-50",
+      "low_confidence_text": "text-rose-700"
+    }
+  },
+  "visual_enhancers": {
+    "surfaces": "Flat solid surfaces with crisp 1px borders (border-slate-200). NO glassmorphism to prevent visual refraction of clinical data. Crisp 'Neumorphism-lite' with very soft shadow-sm for interactive elements.",
+    "confidence_rings": "Use SVG circle with stroke-dasharray for % indication. Green >85%, Amber 60-84%, Red <60%.",
+    "agent_execution": "Animated pulsing dots and 'tracer' beams along the connection lines to show active agent step.",
+    "badges": "Pill-shaped with slight background tint of the semantic color and darker text (e.g., bg-emerald-50 text-emerald-700).",
+    "disclaimer": "Persistent sticky banner at bottom or top: 'ACADEMIC DEMONSTRATION — NOT A CLINICAL DIAGNOSIS' in Amber or Slate background with high contrast text."
+  },
+  "component_instructions": {
+    "Layout": "Left sidebar (dark bg-slate-900) with Phosphor Icons. Main content area with generous padding (p-6 to p-8).",
+    "Cards": "bg-white border border-slate-200 rounded-xl shadow-sm p-6. Never use colored gradients inside clinical data cards.",
+    "Chatbot": "Show execution timeline (Input Guardrail -> Intent Detected -> Agent -> Evidence -> Confidence -> Response). Evidence chips below AI responses. Use a distinct background (e.g., bg-slate-50) for AI messages vs User messages (bg-primary/10).",
+    "Medical_Imaging": "Image container max-h-[60vh] with bounding box overlays (simulated via CSS border on absolute position divs). Include Prediction text and confidence rings.",
+    "Agent_Workflow": "Interactive node-based visualizer. Use a library like reactflow to build a DAG (Directed Acyclic Graph) highlighting 'User Input', 'Guardrail', 'Orchestrator', 'Specialized Agents', 'Confidence Estimator', 'Review', 'Response'. Active node must pulse.",
+    "Tables": "Dense layout, align numbers to right, use monospace font for IDs and Confidence %.",
+    "Clinician_Review": "Dashboard with Approve / Reject / Request Second Review actions, highlighting pending items in a Ranked Workflow Queue."
+  },
+  "layouts": {
+    "Dashboard": "Bento-style grid: 'North Star' metrics top row (grid-cols-1 md:grid-cols-4). Ranked Workflow Queue (col-span-3), Activity Feed (col-span-1).",
+    "Spacing": "Use p-6 inside cards. gap-6 for grid. Generous whitespace between logical sections to reduce cognitive load."
+  },
+  "media": {
+    "icons": "@phosphor-icons/react (Duotone or Regular weight for a clinical, precise feel).",
+    "images": {
+      "chest_xray": "https://images.unsplash.com/photo-1631651363531-fd29aec4cb5c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2MzR8MHwxfHNlYXJjaHwxfHxjaGVzdCUyMHgtcmF5JTIwbWVkaWNhbHxlbnwwfHx8fDE3ODgwOTU0MzJ8MA&ixlib=rb-4.1.0&q=85",
+      "brain_mri": "https://images.unsplash.com/photo-1631563019676-dade0dbdb8fc?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1NzZ8MHwxfHNlYXJjaHwzfHxicmFpbiUyMG1yaSUyMHNjYW4lMjBtZWRpY2FsfGVufDB8fHx8MTc4ODA5NTQzM3ww&ixlib=rb-4.1.0&q=85",
+      "skin_lesion": "https://images.unsplash.com/photo-1732993486279-9d0f3b91adb2?crop=entropy&cs=srgb&fm=jpg&ixid=M3w8NjY2NzV8MHwxfHNlYXJjaHw0fHxza2luJTIwY29uZGl0aW9uJTIwZGVybWF0b2xvZ3l8ZW58MHx8fHwxNzg4MDk1NDMzfDA&ixlib=rb-4.1.0&q=85",
+      "clinician_avatar": "https://images.pexels.com/photos/6762866/pexels-photo-6762866.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
+    }
+  },
+  "3d_libraries": {
+    "Workflow_Graph": "reactflow (or react-flow-renderer) for the agent node execution graph.",
+    "Charts": "recharts for Analytics page (LineChart for latency, BarChart for agent usage)."
+  },
+  "accessibility": {
+    "contrast": "Red/Green/Amber must have minimum 4.5:1 against their backgrounds. Use text-shadow if overlaying text on medical images.",
+    "motion": "Respect prefers-reduced-motion. Animations should be snappy (under 200ms) to feel responsive.",
+    "data_testid": "MANDATORY on all interactive elements (e.g., data-testid='upload-mri-btn', data-testid='approve-review-btn')."
+  },
+  "instructions_to_main_agent": [
+    "Install required fonts from Google Fonts: Manrope, IBM Plex Sans, JetBrains Mono.",
+    "Install @phosphor-icons/react, recharts, sonner, framer-motion, and reactflow (or @xyflow/react).",
+    "Create all components as .js or .jsx files, NOT .tsx.",
+    "Enforce strict clinical aesthetic: no playful emojis (use Phosphor icons instead), no heavy gradients. Rely on typography, white space, and crisp 1px borders.",
+    "Include the persistent medical disclaimer prominently at the bottom of the screen with fixed positioning.",
+    "Build a custom 'Confidence Ring' component using SVG for the Medical Imaging page.",
+    "Construct the AI Chatbot to show distinct Agent states: 'Input Guardrail checking...', 'Intent Detected', 'Agent Executing', 'Generating Response' visually above the message.",
+    "Do NOT use complete transparent backgrounds for dropdowns, overlays, or navbars.",
+    "Override tailwind globals in index.css with the provided CSS variables to ensure brand consistency."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "Do not use generic centered layouts or simplistic gradients.",
+    "NEVER use emojis as icons. Always use the specified icon library.",
+    "Add transition effects to interactive elements (hover, focus) but exclude transforms from 'transition-all'.",
+    "Use 2-3x more spacing than feels comfortable. Cramped designs look cheap.",
+    "Missing categories (especially logos/avatars) must use the provided fallback URLs; placeholder text is FORBIDDEN.",
+    "All components should be extracted properly and modular."
+  ]
+}
