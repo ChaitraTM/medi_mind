@@ -3,7 +3,10 @@ import base64
 import logging
 from typing import Optional, List
 
-from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException, Depends
+from fastapi.security import OAuth2PasswordRequestForm
+from auth import get_current_user, require_role, create_access_token, verify_password, get_password_hash
+from db import users
 from starlette.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -61,6 +64,17 @@ class ReviewActionRequest(BaseModel):
     note: Optional[str] = Field(None, max_length=2000)
 
 
+
+class UserCreate(BaseModel):
+    username: str
+    password: str
+    role: str = "USER"
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+
 # ------------- Helpers -------------
 async def record_execution(agent_name, input_type, status, confidence, handoff_reason, query, start, end):
     doc = {
@@ -71,6 +85,38 @@ async def record_execution(agent_name, input_type, status, confidence, handoff_r
     await agent_executions.insert_one({**doc})
     return doc
 
+
+
+# ------------- Auth -------------
+@api.post("/auth/register")
+async def register(user: UserCreate):
+    existing = await users.find_one({"username": user.username})
+    if existing:
+        raise HTTPException(status_code=400, detail="Username already registered")
+    
+    hashed_password = get_password_hash(user.password)
+    user_doc = {
+        "id": new_id(),
+        "username": user.username,
+        "hashed_password": hashed_password,
+        "role": "USER", # Force role to USER to prevent privilege escalation
+        "created_at": now_iso()
+    }
+    await users.insert_one(user_doc)
+    return {"message": "User registered successfully"}
+
+@api.post("/auth/login", response_model=Token)
+async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = await users.find_one({"username": form_data.username})
+    if not user or not verify_password(form_data.password, user["hashed_password"]):
+        raise HTTPException(status_code=400, detail="Incorrect username or password")
+    
+    access_token = create_access_token(data={"sub": user["username"], "role": user["role"]})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@api.get("/auth/me")
+async def read_users_me(current_user: dict = Depends(get_current_user)):
+    return {"username": current_user["username"], "role": current_user["role"]}
 
 # ------------- Health / Config -------------
 @api.get("/health")
@@ -101,7 +147,7 @@ async def config():
 
 # ------------- Chat (Orchestrator pipeline) -------------
 @api.post("/chat")
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, current_user: dict = Depends(get_current_user)):
     query = (req.message or "").strip()
     if not query:
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
@@ -242,7 +288,7 @@ async def _persist_message(conversation_id, question, response, agent, intent, c
 
 # ------------- Documents -------------
 @api.post("/documents/upload")
-async def upload_document(file: UploadFile = File(...)):
+async def upload_document(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     contents = await file.read()
     if len(contents) > MAX_PDF_BYTES:
         raise HTTPException(status_code=400, detail="File too large (max 15 MB).")
@@ -279,13 +325,13 @@ async def upload_document(file: UploadFile = File(...)):
 
 
 @api.get("/documents")
-async def list_documents():
+async def list_documents(current_user: dict = Depends(get_current_user)):
     docs = await documents.find({}, {"_id": 0}).sort("upload_date", -1).to_list(500)
     return docs
 
 
 @api.delete("/documents/{doc_id}")
-async def delete_document(doc_id: str):
+async def delete_document(doc_id: str, current_user: dict = Depends(get_current_user)):
     doc = await documents.find_one({"id": doc_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found.")
@@ -298,7 +344,7 @@ async def delete_document(doc_id: str):
 
 
 @api.post("/documents/{doc_id}/query")
-async def query_document(doc_id: str, req: WebSearchRequest):
+async def query_document(doc_id: str, req: WebSearchRequest, current_user: dict = Depends(get_current_user)):
     doc = await documents.find_one({"id": doc_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found.")
@@ -319,7 +365,7 @@ async def query_document(doc_id: str, req: WebSearchRequest):
 
 # ------------- Web Search -------------
 @api.post("/web-search")
-async def web_search_endpoint(req: WebSearchRequest):
+async def web_search_endpoint(req: WebSearchRequest, current_user: dict = Depends(get_current_user)):
     results = await web_search(req.query)
     return {"provider": web_provider(), "results": results,
             "demo": web_provider() == "demo"}
@@ -374,23 +420,23 @@ async def _handle_imaging(modality: str, agent_name: str, file: UploadFile):
 
 
 @api.post("/imaging/chest-xray")
-async def imaging_chest(file: UploadFile = File(...)):
+async def imaging_chest(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     return await _handle_imaging("CHEST_XRAY", "Chest X-ray Agent", file)
 
 
 @api.post("/imaging/skin-lesion")
-async def imaging_skin(file: UploadFile = File(...)):
+async def imaging_skin(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     return await _handle_imaging("SKIN_LESION", "Skin Lesion Agent", file)
 
 
 @api.post("/imaging/brain-tumor")
-async def imaging_brain(file: UploadFile = File(...)):
+async def imaging_brain(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     return await _handle_imaging("BRAIN_TUMOR", "Brain Tumor Agent", file)
 
 
 # ------------- Clinician Reviews -------------
 @api.get("/reviews")
-async def list_reviews():
+async def list_reviews(current_user: dict = Depends(require_role(["CLINICIAN", "ADMINISTRATOR"]))):
     revs = await clinician_reviews.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
     return revs
 
@@ -420,26 +466,26 @@ async def _update_review(review_id: str, new_status: str, action: str, note: str
 
 
 @api.post("/reviews/{review_id}/approve")
-async def approve_review(review_id: str, req: ReviewActionRequest = ReviewActionRequest()):
+async def approve_review(review_id: str, req: ReviewActionRequest = ReviewActionRequest(), current_user: dict = Depends(require_role(["CLINICIAN", "ADMINISTRATOR"]))):
     return await _update_review(review_id, "APPROVED", "APPROVED",
                                 "Clinician approved the AI analysis", req.note)
 
 
 @api.post("/reviews/{review_id}/reject")
-async def reject_review(review_id: str, req: ReviewActionRequest = ReviewActionRequest()):
+async def reject_review(review_id: str, req: ReviewActionRequest = ReviewActionRequest(), current_user: dict = Depends(require_role(["CLINICIAN", "ADMINISTRATOR"]))):
     return await _update_review(review_id, "REJECTED", "REJECTED",
                                 "Clinician rejected the AI analysis", req.note)
 
 
 @api.post("/reviews/{review_id}/second-review")
-async def second_review(review_id: str, req: ReviewActionRequest = ReviewActionRequest()):
+async def second_review(review_id: str, req: ReviewActionRequest = ReviewActionRequest(), current_user: dict = Depends(require_role(["CLINICIAN", "ADMINISTRATOR"]))):
     return await _update_review(review_id, "SECOND_REVIEW", "REQUEST_SECOND_REVIEW",
                                 "Clinician requested a second review", req.note)
 
 
 # ------------- Conversations -------------
 @api.get("/conversations")
-async def list_conversations():
+async def list_conversations(current_user: dict = Depends(get_current_user)):
     convs = await conversations.find({}, {"_id": 0}).sort("updated_at", -1).to_list(500)
     for c in convs:
         msgs = await messages.find({"conversation_id": c["id"]}, {"_id": 0}).to_list(200)
@@ -450,7 +496,7 @@ async def list_conversations():
 
 # ------------- Analytics -------------
 @api.get("/analytics")
-async def analytics():
+async def analytics(current_user: dict = Depends(require_role(["ADMINISTRATOR"]))):
     total_conversations = await conversations.count_documents({})
     total_messages = await messages.count_documents({})
     total_docs = await documents.count_documents({})
@@ -497,7 +543,7 @@ async def analytics():
 
 # ------------- Dashboard summary -------------
 @api.get("/dashboard")
-async def dashboard():
+async def dashboard(current_user: dict = Depends(require_role(["ADMINISTRATOR"]))):
     total_conversations = await conversations.count_documents({})
     total_docs = await documents.count_documents({})
     total_imaging = await imaging_analyses.count_documents({})
@@ -519,7 +565,7 @@ async def dashboard():
 
 # ------------- Voice -------------
 @api.post("/voice/transcribe")
-async def voice_transcribe(file: UploadFile = File(...)):
+async def voice_transcribe(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     if not llm_available():
         raise HTTPException(status_code=503,
                             detail="Voice not configured. Add EMERGENT_LLM_KEY to enable speech-to-text.")
@@ -531,7 +577,7 @@ async def voice_transcribe(file: UploadFile = File(...)):
 
 
 @api.post("/voice/speak")
-async def voice_speak(req: SpeakRequest):
+async def voice_speak(req: SpeakRequest, current_user: dict = Depends(get_current_user)):
     if not llm_available():
         raise HTTPException(status_code=503,
                             detail="Voice not configured. Add EMERGENT_LLM_KEY to enable text-to-speech.")
@@ -563,6 +609,19 @@ async def seed_demo():
             "is_demo": True, "size_kb": round(len(demo["text"]) / 1024, 1),
         })
     logger.info("MediMind startup complete. LLM=%s WebProvider=%s", llm_available(), web_provider())
+    
+    # Seed default admin user
+    admin_user = await users.find_one({"username": "admin"})
+    if not admin_user:
+        hashed_pw = get_password_hash("admin")
+        await users.insert_one({
+            "id": new_id(),
+            "username": "admin",
+            "hashed_password": hashed_pw,
+            "role": "ADMINISTRATOR",
+            "created_at": now_iso()
+        })
+        logger.info("Created default admin user (username: admin, password: admin)")
 
 
 app.include_router(api)
