@@ -221,12 +221,16 @@ async def medical_qa_agent(query: str, document_id: Optional[str] = None) -> Dic
 
     if not answer:
         # Local fallback: build answer from retrieved evidence
-        if evidence:
+        max_relevance = max((e.get("relevance", 0) for e in evidence), default=0)
+        
+        # If relevance is low (e.g. TFIDF match is poor), clear evidence so we can fall back to Web Search
+        if evidence and max_relevance > 0.60:
             answer = (
                 "Based on the indexed knowledge base, here is the most relevant information found:\n\n"
                 + "\n\n".join(f"• {e['text'][:500]}..." for e in evidence[:2])
             )
         else:
+            evidence = []
             answer = (
                 "No supporting evidence was found in the local knowledge "
                 "base for this query. Consider uploading a relevant document or enabling web research."

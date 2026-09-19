@@ -62,6 +62,7 @@ def _demo_search(query: str, max_results: int = 2):
     import requests
     try:
         url = "https://en.wikipedia.org/w/api.php"
+        headers = {"User-Agent": "MediMind/1.0 (https://github.com/ChaitraTM/medi_mind; contact@medimind.local)"}
         # Search for titles
         search_params = {
             "action": "query",
@@ -71,7 +72,7 @@ def _demo_search(query: str, max_results: int = 2):
             "utf8": 1,
             "srlimit": max_results
         }
-        res = requests.get(url, params=search_params, timeout=10)
+        res = requests.get(url, params=search_params, headers=headers, timeout=10)
         res.raise_for_status()
         search_data = res.json()
         
@@ -88,7 +89,7 @@ def _demo_search(query: str, max_results: int = 2):
                 "titles": title,
                 "format": "json"
             }
-            ex_res = requests.get(url, params=extract_params, timeout=10)
+            ex_res = requests.get(url, params=extract_params, headers=headers, timeout=10)
             ex_res.raise_for_status()
             pages = ex_res.json().get("query", {}).get("pages", {})
             
