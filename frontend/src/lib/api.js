@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "http://127.0.0.1:8000";
 export const API = `${BACKEND_URL}/api`;
 
 const client = axios.create({ baseURL: API });
@@ -90,3 +90,20 @@ export const api = {
       throw new Error(err(e, "Text-to-speech is not available."));
     }),
 };
+
+client.interceptors.request.use(config => {
+  const token = localStorage.getItem('token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+api.login = (username, password) => {
+  const params = new URLSearchParams();
+  params.append("username", username);
+  params.append("password", password);
+  return client.post("/auth/login", params).then(r => r.data);
+};
+api.register = (username, password) => client.post("/auth/register", { username, password }).then(r => r.data);
+api.me = () => client.get("/auth/me").then(r => r.data);

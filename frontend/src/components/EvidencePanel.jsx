@@ -1,12 +1,12 @@
 import React from "react";
-import { FileText, Globe, Quotes } from "@phosphor-icons/react";
+import { FileText, Globe, BookOpen } from "@phosphor-icons/react";
 
 export function EvidencePanel({ sources = [] }) {
   if (!sources.length) return null;
   return (
     <div data-testid="evidence-panel" className="mt-3 rounded-xl border border-slate-200 bg-white p-4">
       <div className="mb-3 flex items-center gap-2">
-        <Quotes weight="fill" size={16} className="text-primary" />
+        <BookOpen weight="fill" size={16} className="text-primary" />
         <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
           Evidence &amp; Sources ({sources.length})
         </p>

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../components/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { Stethoscope, EnvelopeSimple, LockKey, Eye, Brain, Activity } from '@phosphor-icons/react';
+import { Stethoscope, EnvelopeSimple, LockKey, Eye, Brain, Heartbeat } from '@phosphor-icons/react';
 import { toast } from 'sonner';
 
 export default function ClinicianLogin() {
@@ -128,7 +128,7 @@ export default function ClinicianLogin() {
 
       {/* Bottom Pulse Decor */}
       <div className="absolute bottom-10 flex flex-col items-center text-slate-600 z-0">
-        <Activity className="w-12 h-12 mb-2 text-slate-700" />
+        <Heartbeat className="w-12 h-12 mb-2 text-slate-700" />
         <p className="text-xs tracking-wider uppercase">Better insights. Better care.</p>
       </div>
       
