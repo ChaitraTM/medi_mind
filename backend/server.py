@@ -3,7 +3,10 @@ import base64
 import logging
 from typing import Optional, List
 
-from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException, Depends
+from fastapi.security import OAuth2PasswordRequestForm
+from auth import get_current_user, require_role, create_access_token, verify_password, get_password_hash
+from db import users
 from starlette.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -16,7 +19,7 @@ from db import (
     imaging_analyses, clinician_reviews, agent_executions,
     new_id, now_iso,
 )
-from rag import chunk_text, retrieve
+from rag import chunk_text, retrieve, index_chunks, delete_document_chunks
 from agents import (
     input_guardrail, orchestrate_intent, medical_qa_agent, web_search_agent,
     output_guardrail, estimate_confidence, vision_infer, DISCLAIMER,
@@ -28,6 +31,12 @@ from seed_data import DEMO_DOCUMENTS
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("medimind")
 
+security_logger = logging.getLogger("medimind.security")
+sec_handler = logging.FileHandler("security_audit.log")
+sec_handler.setFormatter(logging.Formatter("%(asctime)s - SECURITY_AUDIT - %(message)s"))
+security_logger.addHandler(sec_handler)
+security_logger.setLevel(logging.INFO)
+
 app = FastAPI(title="MediMind API")
 api = APIRouter(prefix="/api")
 
@@ -37,22 +46,33 @@ MAX_PDF_BYTES = 15 * 1024 * 1024
 
 # ------------- Schemas -------------
 class ChatRequest(BaseModel):
-    message: str
+    message: str = Field(..., max_length=2000)
     conversation_id: Optional[str] = None
     document_id: Optional[str] = None
 
 
 class WebSearchRequest(BaseModel):
-    query: str
+    query: str = Field(..., max_length=1000)
 
 
 class SpeakRequest(BaseModel):
-    text: str
+    text: str = Field(..., max_length=4000)
     voice: str = "nova"
 
 
 class ReviewActionRequest(BaseModel):
-    note: Optional[str] = None
+    note: Optional[str] = Field(None, max_length=2000)
+
+
+
+class UserCreate(BaseModel):
+    username: str
+    password: str
+    role: str = "USER"
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
 
 
 # ------------- Helpers -------------
@@ -65,6 +85,38 @@ async def record_execution(agent_name, input_type, status, confidence, handoff_r
     await agent_executions.insert_one({**doc})
     return doc
 
+
+
+# ------------- Auth -------------
+@api.post("/auth/register")
+async def register(user: UserCreate):
+    existing = await users.find_one({"username": user.username})
+    if existing:
+        raise HTTPException(status_code=400, detail="Username already registered")
+    
+    hashed_password = get_password_hash(user.password)
+    user_doc = {
+        "id": new_id(),
+        "username": user.username,
+        "hashed_password": hashed_password,
+        "role": "USER", # Force role to USER to prevent privilege escalation
+        "created_at": now_iso()
+    }
+    await users.insert_one(user_doc)
+    return {"message": "User registered successfully"}
+
+@api.post("/auth/login", response_model=Token)
+async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = await users.find_one({"username": form_data.username})
+    if not user or not verify_password(form_data.password, user["hashed_password"]):
+        raise HTTPException(status_code=400, detail="Incorrect username or password")
+    
+    access_token = create_access_token(data={"sub": user["username"], "role": user["role"]})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@api.get("/auth/me")
+async def read_users_me(current_user: dict = Depends(get_current_user)):
+    return {"username": current_user["username"], "role": current_user["role"]}
 
 # ------------- Health / Config -------------
 @api.get("/health")
@@ -90,12 +142,13 @@ async def config():
         "vector_db": "qdrant" if os.environ.get("QDRANT_URL") else "local-tfidf",
         "disclaimer": DISCLAIMER,
         "demo_mode": not (llm_available() and web_provider() == "tavily"),
+        "vision_mode": os.environ.get("VISION_MODE", "DEMO").upper(),
     }
 
 
 # ------------- Chat (Orchestrator pipeline) -------------
 @api.post("/chat")
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, current_user: dict = Depends(get_current_user)):
     query = (req.message or "").strip()
     if not query:
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
@@ -104,6 +157,7 @@ async def chat(req: ChatRequest):
     start = now_iso()
 
     # 1. Input Guardrail
+    security_logger.info(f"Received chat request (conv_id={req.conversation_id}, doc_id={req.document_id})")
     guard = input_guardrail(query)
     steps.append({
         "label": "Input Guardrail",
@@ -112,6 +166,10 @@ async def chat(req: ChatRequest):
     })
 
     if not guard["passed"]:
+        if guard.get("injection"):
+            security_logger.warning("Prompt injection detected and blocked.")
+        else:
+            security_logger.warning("Safety violation detected and blocked.")
         response_text = f"⚠ {guard['message']}\n\n{DISCLAIMER}"
         await record_execution("Input Guardrail", "text", "blocked",
                                0, "safety_block", query, start, now_iso())
@@ -119,12 +177,13 @@ async def chat(req: ChatRequest):
                                      "Safety Guardrail", "GENERAL",
                                      {"confidence_score": 0, "confidence_level": "N/A",
                                       "evidence_strength": "N/A", "requires_review": False},
-                                     [], steps, emergency=guard["emergency"])
+                                     [], steps, emergency=guard.get("emergency", False))
         return msg
 
     # 2. Orchestrator
     routing = await orchestrate_intent(query, has_document=bool(req.document_id))
     intent, agent = routing["intent"], routing["agent"]
+    security_logger.info(f"Routed to {agent} (Intent: {intent})")
     steps.append({"label": "Orchestrator", "status": "done",
                   "detail": f"Intent Detected: {intent} ({routing['method']})"})
     steps.append({"label": f"Agent: {agent}", "status": "running", "detail": "Executing specialized agent"})
@@ -179,6 +238,13 @@ async def chat(req: ChatRequest):
         steps.append({"label": "Updated Evidence", "status": "done",
                       "detail": f"{len(result['evidence'])} web source(s)"})
 
+    # Output Validation
+    if "IMPORTANT SECURITY INSTRUCTION" in result["answer"] or "<untrusted_data>" in result["answer"]:
+        security_logger.warning("Data leakage or instruction bleed detected in output. Redacting.")
+        result["answer"] = "I cannot fulfill this request due to a security constraint."
+
+    security_logger.info(f"Agent execution completed successfully (Confidence: {conf['confidence_score']})")
+
     # 5. Output Guardrail
     final_answer = output_guardrail(result["answer"], bool(result["evidence"]), intent)
     if not result.get("used_llm"):
@@ -223,7 +289,7 @@ async def _persist_message(conversation_id, question, response, agent, intent, c
 
 # ------------- Documents -------------
 @api.post("/documents/upload")
-async def upload_document(file: UploadFile = File(...)):
+async def upload_document(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     contents = await file.read()
     if len(contents) > MAX_PDF_BYTES:
         raise HTTPException(status_code=400, detail="File too large (max 15 MB).")
@@ -253,19 +319,20 @@ async def upload_document(file: UploadFile = File(...)):
     } for i, c in enumerate(chunks)]
     if chunk_docs:
         await document_chunks.insert_many(chunk_docs)
+        index_chunks(chunk_docs)
     doc["num_chunks"] = len(chunk_docs)
     await documents.insert_one({**doc})
     return doc
 
 
 @api.get("/documents")
-async def list_documents():
+async def list_documents(current_user: dict = Depends(get_current_user)):
     docs = await documents.find({}, {"_id": 0}).sort("upload_date", -1).to_list(500)
     return docs
 
 
 @api.delete("/documents/{doc_id}")
-async def delete_document(doc_id: str):
+async def delete_document(doc_id: str, current_user: dict = Depends(get_current_user)):
     doc = await documents.find_one({"id": doc_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found.")
@@ -273,11 +340,12 @@ async def delete_document(doc_id: str):
         raise HTTPException(status_code=400, detail="Demo documents cannot be deleted.")
     await documents.delete_one({"id": doc_id})
     await document_chunks.delete_many({"document_id": doc_id})
+    delete_document_chunks(doc_id)
     return {"deleted": doc_id}
 
 
 @api.post("/documents/{doc_id}/query")
-async def query_document(doc_id: str, req: WebSearchRequest):
+async def query_document(doc_id: str, req: WebSearchRequest, current_user: dict = Depends(get_current_user)):
     doc = await documents.find_one({"id": doc_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found.")
@@ -298,7 +366,7 @@ async def query_document(doc_id: str, req: WebSearchRequest):
 
 # ------------- Web Search -------------
 @api.post("/web-search")
-async def web_search_endpoint(req: WebSearchRequest):
+async def web_search_endpoint(req: WebSearchRequest, current_user: dict = Depends(get_current_user)):
     results = await web_search(req.query)
     return {"provider": web_provider(), "results": results,
             "demo": web_provider() == "demo"}
@@ -353,23 +421,23 @@ async def _handle_imaging(modality: str, agent_name: str, file: UploadFile):
 
 
 @api.post("/imaging/chest-xray")
-async def imaging_chest(file: UploadFile = File(...)):
+async def imaging_chest(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     return await _handle_imaging("CHEST_XRAY", "Chest X-ray Agent", file)
 
 
 @api.post("/imaging/skin-lesion")
-async def imaging_skin(file: UploadFile = File(...)):
+async def imaging_skin(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     return await _handle_imaging("SKIN_LESION", "Skin Lesion Agent", file)
 
 
 @api.post("/imaging/brain-tumor")
-async def imaging_brain(file: UploadFile = File(...)):
+async def imaging_brain(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     return await _handle_imaging("BRAIN_TUMOR", "Brain Tumor Agent", file)
 
 
 # ------------- Clinician Reviews -------------
 @api.get("/reviews")
-async def list_reviews():
+async def list_reviews(current_user: dict = Depends(require_role(["CLINICIAN", "ADMINISTRATOR"]))):
     revs = await clinician_reviews.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
     return revs
 
@@ -399,26 +467,26 @@ async def _update_review(review_id: str, new_status: str, action: str, note: str
 
 
 @api.post("/reviews/{review_id}/approve")
-async def approve_review(review_id: str, req: ReviewActionRequest = ReviewActionRequest()):
+async def approve_review(review_id: str, req: ReviewActionRequest = ReviewActionRequest(), current_user: dict = Depends(require_role(["CLINICIAN", "ADMINISTRATOR"]))):
     return await _update_review(review_id, "APPROVED", "APPROVED",
                                 "Clinician approved the AI analysis", req.note)
 
 
 @api.post("/reviews/{review_id}/reject")
-async def reject_review(review_id: str, req: ReviewActionRequest = ReviewActionRequest()):
+async def reject_review(review_id: str, req: ReviewActionRequest = ReviewActionRequest(), current_user: dict = Depends(require_role(["CLINICIAN", "ADMINISTRATOR"]))):
     return await _update_review(review_id, "REJECTED", "REJECTED",
                                 "Clinician rejected the AI analysis", req.note)
 
 
 @api.post("/reviews/{review_id}/second-review")
-async def second_review(review_id: str, req: ReviewActionRequest = ReviewActionRequest()):
+async def second_review(review_id: str, req: ReviewActionRequest = ReviewActionRequest(), current_user: dict = Depends(require_role(["CLINICIAN", "ADMINISTRATOR"]))):
     return await _update_review(review_id, "SECOND_REVIEW", "REQUEST_SECOND_REVIEW",
                                 "Clinician requested a second review", req.note)
 
 
 # ------------- Conversations -------------
 @api.get("/conversations")
-async def list_conversations():
+async def list_conversations(current_user: dict = Depends(get_current_user)):
     convs = await conversations.find({}, {"_id": 0}).sort("updated_at", -1).to_list(500)
     for c in convs:
         msgs = await messages.find({"conversation_id": c["id"]}, {"_id": 0}).to_list(200)
@@ -429,7 +497,7 @@ async def list_conversations():
 
 # ------------- Analytics -------------
 @api.get("/analytics")
-async def analytics():
+async def analytics(current_user: dict = Depends(require_role(["ADMINISTRATOR"]))):
     total_conversations = await conversations.count_documents({})
     total_messages = await messages.count_documents({})
     total_docs = await documents.count_documents({})
@@ -476,7 +544,7 @@ async def analytics():
 
 # ------------- Dashboard summary -------------
 @api.get("/dashboard")
-async def dashboard():
+async def dashboard(current_user: dict = Depends(require_role(["ADMINISTRATOR"]))):
     total_conversations = await conversations.count_documents({})
     total_docs = await documents.count_documents({})
     total_imaging = await imaging_analyses.count_documents({})
@@ -498,7 +566,7 @@ async def dashboard():
 
 # ------------- Voice -------------
 @api.post("/voice/transcribe")
-async def voice_transcribe(file: UploadFile = File(...)):
+async def voice_transcribe(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     if not llm_available():
         raise HTTPException(status_code=503,
                             detail="Voice not configured. Add EMERGENT_LLM_KEY to enable speech-to-text.")
@@ -510,7 +578,7 @@ async def voice_transcribe(file: UploadFile = File(...)):
 
 
 @api.post("/voice/speak")
-async def voice_speak(req: SpeakRequest):
+async def voice_speak(req: SpeakRequest, current_user: dict = Depends(get_current_user)):
     if not llm_available():
         raise HTTPException(status_code=503,
                             detail="Voice not configured. Add EMERGENT_LLM_KEY to enable text-to-speech.")
@@ -535,12 +603,26 @@ async def seed_demo():
         } for i, c in enumerate(chunks)]
         if chunk_docs:
             await document_chunks.insert_many(chunk_docs)
+            index_chunks(chunk_docs)
         await documents.insert_one({
             "id": doc_id, "filename": demo["filename"], "status": "READY",
             "num_chunks": len(chunk_docs), "upload_date": now_iso(),
             "is_demo": True, "size_kb": round(len(demo["text"]) / 1024, 1),
         })
     logger.info("MediMind startup complete. LLM=%s WebProvider=%s", llm_available(), web_provider())
+    
+    # Seed default admin user
+    admin_user = await users.find_one({"username": "admin"})
+    if not admin_user:
+        hashed_pw = get_password_hash("admin")
+        await users.insert_one({
+            "id": new_id(),
+            "username": "admin",
+            "hashed_password": hashed_pw,
+            "role": "ADMINISTRATOR",
+            "created_at": now_iso()
+        })
+        logger.info("Created default admin user (username: admin, password: admin)")
 
 
 app.include_router(api)
