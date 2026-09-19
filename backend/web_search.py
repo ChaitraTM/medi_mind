@@ -58,7 +58,56 @@ async def _tavily_search(query: str, max_results: int = 4):
     ]
 
 
-def _demo_search(query: str, max_results: int = 4):
+def _demo_search(query: str, max_results: int = 2):
+    import requests
+    try:
+        url = "https://en.wikipedia.org/w/api.php"
+        # Search for titles
+        search_params = {
+            "action": "query",
+            "list": "search",
+            "srsearch": query,
+            "format": "json",
+            "utf8": 1,
+            "srlimit": max_results
+        }
+        res = requests.get(url, params=search_params, timeout=10)
+        res.raise_for_status()
+        search_data = res.json()
+        
+        results = []
+        for item in search_data.get("query", {}).get("search", []):
+            title = item["title"]
+            
+            # Fetch snippet for the title
+            extract_params = {
+                "action": "query",
+                "prop": "extracts",
+                "exchars": 800,
+                "explaintext": 1,
+                "titles": title,
+                "format": "json"
+            }
+            ex_res = requests.get(url, params=extract_params, timeout=10)
+            ex_res.raise_for_status()
+            pages = ex_res.json().get("query", {}).get("pages", {})
+            
+            for page_id, page_data in pages.items():
+                if "extract" in page_data:
+                    results.append({
+                        "title": f"Wikipedia: {title}",
+                        "content": page_data["extract"],
+                        "url": f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}",
+                        "score": 0.85,
+                        "provider": "wikipedia"
+                    })
+        
+        if results:
+            return results
+    except Exception as e:
+        logger.warning("Wikipedia API failed: %s", e)
+        
+    # Fallback to local demo corpus if Wikipedia fails or has no results
     low = query.lower()
     scored = []
     for item in DEMO_WEB_CORPUS:
@@ -74,13 +123,12 @@ def _demo_search(query: str, max_results: int = 4):
         for score, item in picked
     ]
 
-
 async def web_search(query: str, max_results: int = 4):
     if TAVILY_API_KEY:
         try:
             return await _tavily_search(query, max_results)
         except Exception as e:  # noqa: BLE001
-            logger.warning("Tavily failed, falling back to demo search: %s", e)
+            logger.warning("Tavily failed, falling back to wikipedia/demo search: %s", e)
     return _demo_search(query, max_results)
 
 
