@@ -16,7 +16,7 @@ from db import (
     imaging_analyses, clinician_reviews, agent_executions,
     new_id, now_iso,
 )
-from rag import chunk_text, retrieve
+from rag import chunk_text, retrieve, index_chunks, delete_document_chunks
 from agents import (
     input_guardrail, orchestrate_intent, medical_qa_agent, web_search_agent,
     output_guardrail, estimate_confidence, vision_infer, DISCLAIMER,
@@ -28,6 +28,12 @@ from seed_data import DEMO_DOCUMENTS
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("medimind")
 
+security_logger = logging.getLogger("medimind.security")
+sec_handler = logging.FileHandler("security_audit.log")
+sec_handler.setFormatter(logging.Formatter("%(asctime)s - SECURITY_AUDIT - %(message)s"))
+security_logger.addHandler(sec_handler)
+security_logger.setLevel(logging.INFO)
+
 app = FastAPI(title="MediMind API")
 api = APIRouter(prefix="/api")
 
@@ -37,22 +43,22 @@ MAX_PDF_BYTES = 15 * 1024 * 1024
 
 # ------------- Schemas -------------
 class ChatRequest(BaseModel):
-    message: str
+    message: str = Field(..., max_length=2000)
     conversation_id: Optional[str] = None
     document_id: Optional[str] = None
 
 
 class WebSearchRequest(BaseModel):
-    query: str
+    query: str = Field(..., max_length=1000)
 
 
 class SpeakRequest(BaseModel):
-    text: str
+    text: str = Field(..., max_length=4000)
     voice: str = "nova"
 
 
 class ReviewActionRequest(BaseModel):
-    note: Optional[str] = None
+    note: Optional[str] = Field(None, max_length=2000)
 
 
 # ------------- Helpers -------------
@@ -104,6 +110,7 @@ async def chat(req: ChatRequest):
     start = now_iso()
 
     # 1. Input Guardrail
+    security_logger.info(f"Received chat request (conv_id={req.conversation_id}, doc_id={req.document_id})")
     guard = input_guardrail(query)
     steps.append({
         "label": "Input Guardrail",
@@ -112,6 +119,10 @@ async def chat(req: ChatRequest):
     })
 
     if not guard["passed"]:
+        if guard.get("injection"):
+            security_logger.warning("Prompt injection detected and blocked.")
+        else:
+            security_logger.warning("Safety violation detected and blocked.")
         response_text = f"⚠ {guard['message']}\n\n{DISCLAIMER}"
         await record_execution("Input Guardrail", "text", "blocked",
                                0, "safety_block", query, start, now_iso())
@@ -119,12 +130,13 @@ async def chat(req: ChatRequest):
                                      "Safety Guardrail", "GENERAL",
                                      {"confidence_score": 0, "confidence_level": "N/A",
                                       "evidence_strength": "N/A", "requires_review": False},
-                                     [], steps, emergency=guard["emergency"])
+                                     [], steps, emergency=guard.get("emergency", False))
         return msg
 
     # 2. Orchestrator
     routing = await orchestrate_intent(query, has_document=bool(req.document_id))
     intent, agent = routing["intent"], routing["agent"]
+    security_logger.info(f"Routed to {agent} (Intent: {intent})")
     steps.append({"label": "Orchestrator", "status": "done",
                   "detail": f"Intent Detected: {intent} ({routing['method']})"})
     steps.append({"label": f"Agent: {agent}", "status": "running", "detail": "Executing specialized agent"})
@@ -178,6 +190,13 @@ async def chat(req: ChatRequest):
         steps[-1]["status"] = "done"
         steps.append({"label": "Updated Evidence", "status": "done",
                       "detail": f"{len(result['evidence'])} web source(s)"})
+
+    # Output Validation
+    if "IMPORTANT SECURITY INSTRUCTION" in result["answer"] or "<untrusted_data>" in result["answer"]:
+        security_logger.warning("Data leakage or instruction bleed detected in output. Redacting.")
+        result["answer"] = "I cannot fulfill this request due to a security constraint."
+
+    security_logger.info(f"Agent execution completed successfully (Confidence: {conf['confidence_score']})")
 
     # 5. Output Guardrail
     final_answer = output_guardrail(result["answer"], bool(result["evidence"]), intent)
@@ -253,6 +272,7 @@ async def upload_document(file: UploadFile = File(...)):
     } for i, c in enumerate(chunks)]
     if chunk_docs:
         await document_chunks.insert_many(chunk_docs)
+        index_chunks(chunk_docs)
     doc["num_chunks"] = len(chunk_docs)
     await documents.insert_one({**doc})
     return doc
@@ -273,6 +293,7 @@ async def delete_document(doc_id: str):
         raise HTTPException(status_code=400, detail="Demo documents cannot be deleted.")
     await documents.delete_one({"id": doc_id})
     await document_chunks.delete_many({"document_id": doc_id})
+    delete_document_chunks(doc_id)
     return {"deleted": doc_id}
 
 
@@ -535,6 +556,7 @@ async def seed_demo():
         } for i, c in enumerate(chunks)]
         if chunk_docs:
             await document_chunks.insert_many(chunk_docs)
+            index_chunks(chunk_docs)
         await documents.insert_one({
             "id": doc_id, "filename": demo["filename"], "status": "READY",
             "num_chunks": len(chunk_docs), "upload_date": now_iso(),
