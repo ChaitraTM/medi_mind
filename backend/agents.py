@@ -6,6 +6,7 @@ estimation, and output guardrail. Every step is recorded for the workflow
 visualization and audit trail.
 """
 import re
+import os
 import hashlib
 import logging
 from typing import List, Dict, Optional
@@ -293,12 +294,19 @@ VISION_LABELS = {
 }
 
 
-def vision_infer(modality: str, image_bytes: bytes) -> Dict:
-    """Deterministic demonstration inference. Modular: replace with real model later.
+def _real_vision_infer(modality: str, image_bytes: bytes) -> Dict:
+    raise RuntimeError(
+        "Clinical PyTorch model weights are not loaded. "
+        "Please set VISION_MODE=DEMO in your environment to use the academic demonstration adapter."
+    )
 
-    Uses a hash of the image so the same image yields a stable result across
-    refreshes, while different images vary. Clearly an academic demonstration.
-    """
+def vision_infer(modality: str, image_bytes: bytes) -> Dict:
+    """Deterministic demonstration inference or Real PyTorch inference."""
+    
+    vision_mode = os.environ.get("VISION_MODE", "DEMO").upper()
+    if vision_mode == "REAL":
+        return _real_vision_infer(modality, image_bytes)
+
     labels = VISION_LABELS[modality]
     h = int(hashlib.sha256(image_bytes).hexdigest(), 16)
     idx = h % len(labels)
@@ -309,6 +317,7 @@ def vision_infer(modality: str, image_bytes: bytes) -> Dict:
         "prediction": prediction,
         "confidence": confidence,
         "analysis": (
+            f"[DEMO MODE - NOT CLINICAL INFERENCE]\n"
             f"ACADEMIC DEMONSTRATION — NOT A CLINICAL DIAGNOSIS.\n\n{analysis}\n\n"
             "This result is produced by a demonstration inference adapter for the purpose of "
             "the project review. It does not use validated clinical model weights."

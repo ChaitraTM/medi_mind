@@ -142,6 +142,7 @@ async def config():
         "vector_db": "qdrant" if os.environ.get("QDRANT_URL") else "local-tfidf",
         "disclaimer": DISCLAIMER,
         "demo_mode": not (llm_available() and web_provider() == "tavily"),
+        "vision_mode": os.environ.get("VISION_MODE", "DEMO").upper(),
     }
 
 

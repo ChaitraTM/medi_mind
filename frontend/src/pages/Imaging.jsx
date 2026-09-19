@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   UploadSimple,
@@ -41,8 +41,13 @@ export default function Imaging() {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [steps, setSteps] = useState([]);
+  const [visionMode, setVisionMode] = useState("DEMO");
   const fileRef = useRef();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    api.config().then((conf) => setVisionMode(conf.vision_mode)).catch(console.error);
+  }, []);
 
   const reset = () => { setPreview(null); setResult(null); setSteps([]); };
 
@@ -52,7 +57,7 @@ export default function Imaging() {
     setLoading(true);
     setSteps([
       { label: "Image Uploaded", status: "done", detail: file.name },
-      { label: `${MODES[mode].agent}`, status: "running", detail: "Running demonstration inference" },
+      { label: `${MODES[mode].agent}`, status: "running", detail: "Running inference" },
     ]);
     try {
       const res = await api.imaging(mode, file);
@@ -97,14 +102,16 @@ export default function Imaging() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-3">
-        <p className="text-sm font-semibold text-amber-800">
-          ACADEMIC DEMONSTRATION — NOT A CLINICAL DIAGNOSIS
-        </p>
-        <p className="text-xs text-amber-700">
-          Imaging analysis uses a demonstration inference adapter and always requires clinician review.
-        </p>
-      </div>
+      {visionMode === "DEMO" && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-3">
+          <p className="text-sm font-semibold text-amber-800">
+            ACADEMIC DEMONSTRATION — NOT A CLINICAL DIAGNOSIS
+          </p>
+          <p className="text-xs text-amber-700">
+            Imaging analysis uses a demonstration inference adapter and always requires clinician review.
+          </p>
+        </div>
+      )}
 
       {/* Mode tabs */}
       <div className="grid grid-cols-3 gap-3">
