@@ -221,15 +221,18 @@ async def medical_qa_agent(query: str, document_id: Optional[str] = None) -> Dic
 
     if not answer:
         # Local fallback: build answer from retrieved evidence
-        if evidence:
+        max_relevance = max((e.get("relevance", 0) for e in evidence), default=0)
+        
+        # If relevance is low (e.g. TFIDF match is poor), clear evidence so we can fall back to Web Search
+        if evidence and max_relevance > 0.60:
             answer = (
-                "ACADEMIC DEMONSTRATION RESULT (local fallback):\nBased on the indexed knowledge base, "
-                "the most relevant information found is:\n\n"
-                + "\n\n".join(f"• {e['text'][:400]}" for e in evidence[:2])
+                "Based on the indexed knowledge base, here is the most relevant information found:\n\n"
+                + "\n\n".join(f"• {e['text'][:500]}..." for e in evidence[:2])
             )
         else:
+            evidence = []
             answer = (
-                "ACADEMIC DEMONSTRATION RESULT: No supporting evidence was found in the local knowledge "
+                "No supporting evidence was found in the local knowledge "
                 "base for this query. Consider uploading a relevant document or enabling web research."
             )
 
@@ -264,8 +267,8 @@ async def web_search_agent(query: str) -> Dict:
     else:
         used_llm = False
         answer = (
-            "ACADEMIC DEMONSTRATION RESULT (Demo Web Search):\n"
-            + "\n\n".join(f"• {r['title']}: {r['content'][:300]}" for r in results[:3])
+            "Here is a summary of information found from the web:\n"
+            + "\n\n".join(f"• {r['title']}: {r['content'][:300]}..." for r in results[:3])
         )
     conf = estimate_confidence(evidence, answer, source="web")
     return {"answer": answer, "evidence": evidence, "confidence": conf, "used_llm": used_llm}

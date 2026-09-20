@@ -247,8 +247,6 @@ async def chat(req: ChatRequest, current_user: dict = Depends(get_current_user))
 
     # 5. Output Guardrail
     final_answer = output_guardrail(result["answer"], bool(result["evidence"]), intent)
-    if not result.get("used_llm"):
-        final_answer = "ACADEMIC DEMONSTRATION RESULT\n\n" + final_answer if "ACADEMIC DEMONSTRATION" not in final_answer else final_answer
     steps.append({"label": "Response Generated", "status": "done",
                   "detail": "Output guardrail applied + disclaimer attached"})
 

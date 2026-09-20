@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { NavLink, useLocation } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { useAuth } from "@/components/AuthContext";
 import {
   SquaresFour,
   ChatCircleDots,
@@ -26,6 +27,24 @@ const NAV = [
 ];
 
 function SidebarContent({ onNavigate }) {
+  const { user, logout } = useAuth();
+  
+  const filteredNav = NAV.filter(item => {
+    if (!user) return false;
+    
+    // Patient can't see these
+    if (user.role === 'USER' || user.role === 'PATIENT') {
+      if (['/review', '/workflow', '/analytics'].includes(item.to)) return false;
+    }
+    
+    // Clinician can't see these
+    if (user.role === 'CLINICIAN') {
+      if (['/workflow', '/analytics'].includes(item.to)) return false;
+    }
+    
+    return true;
+  });
+
   return (
     <div className="flex h-full flex-col bg-slate-900 text-slate-300">
       <div className="flex items-center gap-3 px-6 py-6">
@@ -43,7 +62,7 @@ function SidebarContent({ onNavigate }) {
       </div>
 
       <nav className="flex-1 space-y-1 px-3 py-2">
-        {NAV.map((item) => {
+        {filteredNav.map((item) => {
           const Icon = item.icon;
           return (
             <NavLink
@@ -67,7 +86,13 @@ function SidebarContent({ onNavigate }) {
         })}
       </nav>
 
-      <div className="border-t border-slate-800 px-5 py-4">
+      <div className="border-t border-slate-800 px-5 py-4 space-y-4">
+        {user && (
+          <div className="flex items-center justify-between text-xs font-semibold text-slate-400">
+            <span>{user.username} ({user.role})</span>
+            <button onClick={logout} className="hover:text-white underline">Logout</button>
+          </div>
+        )}
         <div className="rounded-lg bg-slate-800/60 p-3">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-accent">
             Demo Mode Ready

@@ -11,9 +11,9 @@ from motor.motor_asyncio import AsyncIOMotorClient
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
-mongo_url = os.environ["MONGO_URL"]
+mongo_url = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
 client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ["DB_NAME"]]
+db = client[os.environ.get("DB_NAME", "medimind")]
 
 
 def new_id() -> str:
@@ -25,6 +25,7 @@ def now_iso() -> str:
 
 
 # Collections
+users = db.users
 documents = db.documents
 document_chunks = db.document_chunks
 conversations = db.conversations

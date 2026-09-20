@@ -60,52 +60,93 @@ export default function Assistant() {
     }
   };
 
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mr = new MediaRecorder(stream);
-      chunksRef.current = [];
-      mr.ondataavailable = (e) => e.data.size && chunksRef.current.push(e.data);
-      mr.onstop = async () => {
-        stream.getTracks().forEach((t) => t.stop());
-        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-        toast.loading("Transcribing…", { id: "stt" });
-        try {
-          const res = await api.transcribe(blob);
-          toast.dismiss("stt");
-          if (res.text) {
-            setInput(res.text);
-            toast.success("Transcribed");
-          }
-        } catch (e) {
-          toast.dismiss("stt");
-          toast.error(e.message);
-        }
+  const [speechRecognition, setSpeechRecognition] = useState(null);
+
+  useEffect(() => {
+    // Initialize speech recognition if supported
+    const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognitionAPI) {
+      const recognition = new SpeechRecognitionAPI();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = 'en-US';
+      
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        setInput(transcript);
+        toast.success("Transcribed");
+        setRecording(false);
       };
-      mr.start();
-      mediaRef.current = mr;
+      
+      recognition.onerror = (event) => {
+        toast.error(`Speech recognition error: ${event.error}`);
+        setRecording(false);
+      };
+      
+      recognition.onend = () => {
+        setRecording(false);
+      };
+      
+      setSpeechRecognition(recognition);
+    }
+  }, []);
+
+  const startRecording = () => {
+    if (!speechRecognition) {
+      toast.error("Speech recognition is not supported in this browser.");
+      return;
+    }
+    try {
+      speechRecognition.start();
       setRecording(true);
-    } catch {
+      toast.info("Listening...", { id: "stt" });
+    } catch (e) {
       toast.error("Microphone access denied or unavailable.");
     }
   };
 
   const stopRecording = () => {
-    mediaRef.current?.stop();
+    if (speechRecognition) {
+      speechRecognition.stop();
+    }
     setRecording(false);
+    toast.dismiss("stt");
   };
 
-  const speak = async (text) => {
-    toast.loading("Generating audio…", { id: "tts" });
-    try {
-      const res = await api.speak(text);
-      toast.dismiss("tts");
-      const audio = new Audio(`data:audio/mp3;base64,${res.audio_base64}`);
-      audio.play();
-    } catch (e) {
-      toast.dismiss("tts");
-      toast.error(e.message);
+  const speak = (text) => {
+    if (!window.speechSynthesis) {
+      toast.error("Text-to-speech is not supported in this browser.");
+      return;
     }
+    
+    // Stop any ongoing speech
+    window.speechSynthesis.cancel();
+    
+    // Clean up the text (remove markdown, asterisks, URLs)
+    const cleanText = text
+      .replace(/\*/g, '')
+      .replace(/#/g, '')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .replace(/(?:https?|ftp):\/\/[\n\S]+/g, '');
+      
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    
+    // Try to find a good voice (e.g. Google US English, Samantha, etc.)
+    const voices = window.speechSynthesis.getVoices();
+    const preferredVoice = voices.find(v => v.name.includes("Google") || v.name.includes("Samantha")) || voices[0];
+    if (preferredVoice) utterance.voice = preferredVoice;
+    
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+    
+    utterance.onstart = () => toast.info("Speaking...", { id: "tts" });
+    utterance.onend = () => toast.dismiss("tts");
+    utterance.onerror = () => {
+      toast.dismiss("tts");
+      toast.error("Failed to speak.");
+    };
+    
+    window.speechSynthesis.speak(utterance);
   };
 
   const openConversation = (conv) => {
